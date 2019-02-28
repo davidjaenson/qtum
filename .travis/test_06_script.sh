@@ -38,11 +38,11 @@ if [ "$RUN_UNIT_TESTS" = "true" ]; then
 fi
 
 if [ "$TRAVIS_EVENT_TYPE" = "cron" ]; then
-  extended="--extended --exclude feature_pruning"
+  extended="--extended --exclude feature_pruning,feature_assumevalid,feature_bip68_sequence,feature_cltv,feature_dbcrash,feature_dersig,feature_fee_estimation,feature_maxuploadtarget,feature_rbf,mempool_packages,p2p_feefilter,p2p_unrequested_blocks"
 fi
 
 if [ "$RUN_FUNCTIONAL_TESTS" = "true" ]; then
   BEGIN_FOLD functional-tests
-  DOCKER_EXEC test/functional/test_runner.py --combinedlogslen=4000 --coverage --quiet ${extended} ${FUNCTIONAL_TESTS_CONFIG}
+  DOCKER_EXEC test/functional/test_runner.py --combinedlogslen=500 --coverage --quiet --exclude qtum_callcontract_timestamp,wallet_txn_clone,rpc_psbt,qtum_pos,p2p_compactblocks,feature_nulldummy,wallet_multiwallet,feature_block,p2p_segwit,qtum_ignore_mpos_participant_reward,qtum_opcall,qtum_pos_conflicting_txs,wallet_bumpfee ${extended} ${FUNCTIONAL_TESTS_CONFIG}
   END_FOLD
 fi

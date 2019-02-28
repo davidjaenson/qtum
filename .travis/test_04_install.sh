@@ -19,8 +19,8 @@ if [ -n "$DPKG_ADD_ARCH" ]; then
 fi
 
 travis_retry DOCKER_EXEC apt-get update -qq
-travis_retry DOCKER_EXEC apt-get install -qq -o=Dpkg::Use-Pty=0 --no-install-recommends --no-upgrade $PACKAGES $DOCKER_PACKAGES
+travis_retry DOCKER_EXEC apt-get install -qq --no-install-recommends --no-upgrade $PACKAGES $DOCKER_PACKAGES
 travis_retry DOCKER_EXEC add-apt-repository -y ppa:bitcoin/bitcoin
 travis_retry DOCKER_EXEC apt-get update -qq
-travis_retry DOCKER_EXEC apt-get install -qq -o=Dpkg::Use-Pty=0 libdb4.8++-dev
+travis_retry DOCKER_EXEC apt-get install -qq libdb4.8++-dev
 
