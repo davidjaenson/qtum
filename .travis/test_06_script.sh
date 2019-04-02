@@ -37,9 +37,9 @@ if [ "$RUN_UNIT_TESTS" = "true" ]; then
   END_FOLD
 fi
 
-if [ "$TRAVIS_EVENT_TYPE" = "cron" ]; then
-  extended="--extended --exclude feature_pruning,feature_assumevalid,feature_bip68_sequence,feature_cltv,feature_dbcrash,feature_dersig,feature_fee_estimation,feature_maxuploadtarget,feature_rbf,mempool_packages,p2p_feefilter,p2p_unrequested_blocks"
-fi
+# if [ "$TRAVIS_EVENT_TYPE" = "cron" ]; then
+#   extended="--extended --exclude feature_pruning,feature_assumevalid,feature_bip68_sequence,feature_cltv,feature_dbcrash,feature_dersig,feature_fee_estimation,feature_maxuploadtarget,feature_rbf,mempool_packages,p2p_feefilter,p2p_unrequested_blocks"
+# fi
 
 if [ "$RUN_FUNCTIONAL_TESTS" = "true" ]; then
   BEGIN_FOLD functional-tests
