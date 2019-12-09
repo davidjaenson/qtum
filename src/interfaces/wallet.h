@@ -182,15 +182,14 @@ public:
     virtual bool tryGetTxStatus(const uint256& txid,
         WalletTxStatus& tx_status,
         int& num_blocks,
-        int64_t& adjusted_time) = 0;
+        int64_t& block_time) = 0;
 
     //! Get transaction details.
     virtual WalletTx getWalletTxDetails(const uint256& txid,
         WalletTxStatus& tx_status,
         WalletOrderForm& order_form,
         bool& in_mempool,
-        int& num_blocks,
-        int64_t& adjusted_time) = 0;
+        int& num_blocks) = 0;
 
     //! Get balances.
     virtual WalletBalances getBalances() = 0;
@@ -223,7 +222,7 @@ public:
     virtual bool isMineAddress(const std::string &strAddress) = 0;
 
     //! Try get available coins addresses
-    virtual bool tryGetAvailableAddresses(std::vector<std::string> &spendableAddresses, std::vector<std::string> &allAddresses) = 0;
+    virtual bool tryGetAvailableAddresses(std::vector<std::string> &spendableAddresses, std::vector<std::string> &allAddresses, bool &includeZeroValue) = 0;
 
     //! Return AvailableCoins + LockedCoins grouped by wallet address.
     //! (put change in one group with wallet address)
@@ -248,6 +247,9 @@ public:
     // Return whether HD enabled.
     virtual bool hdEnabled() = 0;
 
+    // Return whether the wallet is blank.
+    virtual bool canGetAddresses() = 0;
+
     // check if a certain wallet flag is set.
     virtual bool IsWalletFlagSet(uint64_t flag) = 0;
 
@@ -256,6 +258,9 @@ public:
 
     // Get default change type.
     virtual OutputType getDefaultChangeType() = 0;
+
+    // Remove wallet.
+    virtual void remove() = 0;
 
     //! Add wallet token entry.
     virtual bool addTokenEntry(const TokenInfo &token) = 0;
@@ -317,6 +322,9 @@ public:
     //! Try get the stake weight
     virtual bool tryGetStakeWeight(uint64_t& nWeight) = 0;
 
+    //! Get the stake weight
+    virtual uint64_t getStakeWeight() = 0;
+
     //! Get last coin stake search interval
     virtual int64_t getLastCoinStakeSearchInterval() = 0;
 
@@ -325,6 +333,12 @@ public:
 
     //! Set wallet unlock for staking only
     virtual void setWalletUnlockStakingOnly(bool unlock) = 0;
+
+    //! Set wallet enabled for staking
+    virtual void setEnabledStaking(bool enabled) = 0;
+
+    //! Get wallet enabled for staking
+    virtual bool getEnabledStaking() = 0;
 
     //! Register handler for unload message.
     using UnloadFn = std::function<void()>;
@@ -362,6 +376,10 @@ public:
     using WatchOnlyChangedFn = std::function<void(bool have_watch_only)>;
     virtual std::unique_ptr<Handler> handleWatchOnlyChanged(WatchOnlyChangedFn fn) = 0;
 
+    //! Register handler for keypool changed messages.
+    using CanGetAddressesChangedFn = std::function<void()>;
+    virtual std::unique_ptr<Handler> handleCanGetAddressesChanged(CanGetAddressesChangedFn fn) = 0;
+
     //! Register handler for contract book changed messages.
     using ContractBookChangedFn = std::function<void( const std::string& address,
         const std::string& label,
@@ -385,7 +403,6 @@ public:
     //! Send pending transaction and commit to wallet.
     virtual bool commit(WalletValueMap value_map,
         WalletOrderForm order_form,
-        std::string from_account,
         std::string& reject_reason) = 0;
 };
 
@@ -510,8 +527,8 @@ struct ContractBookData
     std::string abi;
 };
 
-//! Return implementation of Wallet interface. This function will be undefined
-//! in builds where ENABLE_WALLET is false.
+//! Return implementation of Wallet interface. This function is defined in
+//! dummywallet.cpp and throws if the wallet component is not compiled.
 std::unique_ptr<Wallet> MakeWallet(const std::shared_ptr<CWallet>& wallet);
 
 } // namespace interfaces

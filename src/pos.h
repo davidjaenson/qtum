@@ -43,10 +43,29 @@ bool CheckProofOfStake(CBlockIndex* pindexPrev, CValidationState& state, const C
 // Check whether the coinstake timestamp meets protocol
 bool CheckCoinStakeTimestamp(uint32_t nTimeBlock);
 
+// Should be called in ConnectBlock to make sure that the input pubkey == output pubkey
+// Since it is only used in ConnectBlock, we know that we have access to the full contextual utxo set
+bool CheckBlockInputPubKeyMatchesOutputPubKey(const CBlock& block, CCoinsViewCache& view);
+
+// Recover the pubkey and check that it matches the prevoutStake's scriptPubKey.
+bool CheckRecoveredPubKeyFromBlockSignature(CBlockIndex* pindexPrev, const CBlockHeader& block, CCoinsViewCache& view);
+
 // Wrapper around CheckStakeKernelHash()
 // Also checks existence of kernel input and min age
 // Convenient for searching a kernel
 bool CheckKernel(CBlockIndex* pindexPrev, unsigned int nBits, uint32_t nTimeBlock, const COutPoint& prevout, CCoinsViewCache& view);
 bool CheckKernel(CBlockIndex* pindexPrev, unsigned int nBits, uint32_t nTimeBlock, const COutPoint& prevout, CCoinsViewCache& view, const std::map<COutPoint, CStakeCache>& cache);
+
+unsigned int GetStakeMaxCombineInputs();
+
+int64_t GetStakeCombineThreshold();
+
+unsigned int GetStakeSplitOutputs();
+
+int64_t GetStakeSplitThreshold();
+
+bool GetMPoSOutputScripts(std::vector<CScript> &mposScroptList, int nHeight, const Consensus::Params& consensusParams);
+
+bool CreateMPoSOutputs(CMutableTransaction& txNew, int64_t nRewardPiece, int nHeight, const Consensus::Params& consensusParams);
 
 #endif // QUANTUM_POS_H

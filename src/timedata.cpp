@@ -11,8 +11,8 @@
 #include <netaddress.h>
 #include <sync.h>
 #include <ui_interface.h>
-#include <util.h>
-#include <utilstrencodings.h>
+#include <util/system.h>
+#include <util/strencodings.h>
 #include <warnings.h>
 
 
@@ -94,7 +94,7 @@ void AddTimeData(const CNetAddr& ip, int64_t nOffsetSample)
             {
                 // If nobody has a time different than ours but within 16 seconds of ours, give a warning
                 bool fMatch = false;
-                for (int64_t nOffset : vSorted)
+                for (const int64_t nOffset : vSorted)
                     if (nOffset != 0 && abs64(nOffset) < 16)
                         fMatch = true;
 
@@ -103,13 +103,13 @@ void AddTimeData(const CNetAddr& ip, int64_t nOffsetSample)
                     fDone = true;
                     std::string strMessage = strprintf(_("Please check that your computer's date and time are correct! If your clock is wrong, %s will not work properly."), _(PACKAGE_NAME));
                     SetMiscWarning(strMessage);
-                    uiInterface.ThreadSafeMessageBox(strMessage, "", CClientUIInterface::MSG_WARNING);
+                    uiInterface.ThreadSafeMessageBox(strMessage, "", CClientUIInterface::ICON_WARNING);
                 }
             }
         }
 
         if (LogAcceptCategory(BCLog::NET)) {
-            for (int64_t n : vSorted) {
+            for (const int64_t n : vSorted) {
                 LogPrint(BCLog::NET, "%+d  ", n); /* Continued */
             }
             LogPrint(BCLog::NET, "|  "); /* Continued */

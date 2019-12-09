@@ -3,7 +3,10 @@
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.qtum import activate_mpos
 from test_framework.qtumconfig import COINBASE_MATURITY
+from test_framework.address import byte_to_base58
+from test_framework.messages import hash256
 import time
+import struct
 
 class QtumCallContractTimestampTest(BitcoinTestFramework):
     def set_test_params(self):
@@ -11,9 +14,15 @@ class QtumCallContractTimestampTest(BitcoinTestFramework):
         self.setup_clean_chain = True
         self.extra_args = [[]]
 
+    def skip_test_if_missing_module(self):
+        self.skip_if_no_wallet()
+
     def run_test(self):
         self.node = self.nodes[0]
-        self.node.generate(100 + COINBASE_MATURITY)
+        privkey = byte_to_base58(hash256(struct.pack('<I', 0)), 239)
+        self.node.importprivkey(privkey)
+
+        self.node.generatetoaddress(100 + COINBASE_MATURITY, "qSrM9K6FMhZ29Vkp8Rdk8Jp66bbfpjFETq")
 
         """
         pragma solidity ^0.4.11;

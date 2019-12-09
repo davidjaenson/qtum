@@ -4,11 +4,13 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <logging.h>
-#include <utiltime.h>
+#include <util/time.h>
 
 const char * const DEFAULT_DEBUGLOGFILE = "debug.log";
 const char * const DEFAULT_DEBUGVMLOGFILE = "vm.log";
 
+BCLog::Logger& LogInstance()
+{
 /**
  * NOTE: the logger instances is leaked on exit. This is ugly, but will be
  * cleaned up by the OS/libc. Defining a logger as a global object doesn't work
@@ -18,11 +20,15 @@ const char * const DEFAULT_DEBUGVMLOGFILE = "vm.log";
  * access the logger. When the shutdown sequence is fully audited and tested,
  * explicit destruction of these objects can be implemented by changing this
  * from a raw pointer to a std::unique_ptr.
+ * Since the destructor is never called, the logger and all its members must
+ * have a trivial destructor.
  *
  * This method of initialization was originally introduced in
  * ee3374234c60aba2cc4c5cd5cac1c0aefc2d817c.
  */
-BCLog::Logger* const g_logger = new BCLog::Logger();
+    static BCLog::Logger* g_logger{new BCLog::Logger()};
+    return *g_logger;
+}
 
 bool fLogIPs = DEFAULT_LOGIPS;
 
@@ -49,20 +55,22 @@ bool BCLog::Logger::OpenDebugLog()
 
     if (m_fileout) {
         setbuf(m_fileout, nullptr); // unbuffered
-        // dump buffered messages from before we opened the log
-        while (!m_msgs_before_open.empty()) {
-            FileWriteStr(m_msgs_before_open.front(), m_fileout);
-            m_msgs_before_open.pop_front();
-        }
     }
+
     ///////////////////////////////////////////// // qtum
     if (m_fileoutVM) {
         setbuf(m_fileoutVM, nullptr); // unbuffered
-        // dump buffered messages from before we opened the log
-        while (!m_msgs_before_open.empty()) {
-            FileWriteStr(m_msgs_before_open.front(), m_fileoutVM);
-            m_msgs_before_open.pop_front();
+    }
+
+    // dump buffered messages from before we opened the log
+    while (!m_msgs_before_open.empty()) {
+        LogMsg logmsg= m_msgs_before_open.front();
+        FILE* file = logmsg.useVMLog ? m_fileoutVM : m_fileout;
+        if(file)
+        {
+            FileWriteStr(logmsg.msg, file);
         }
+        m_msgs_before_open.pop_front();
     }
     /////////////////////////////////////////////
 
@@ -219,16 +227,11 @@ std::string BCLog::Logger::LogTimestampStr(const std::string &str)
 
 void BCLog::Logger::LogPrintStr(const std::string &str, bool useVMLog)
 {
-    //////////////////////////////// // qtum
-    FILE* file = m_fileout;
-    if(useVMLog){
-        file = m_fileoutVM;
-    }
-    ////////////////////////////////
-
     std::string strTimestamped = LogTimestampStr(str);
+    bool print_to_console = m_print_to_console;
+    if(print_to_console && useVMLog && !m_show_evm_logs) print_to_console = false;
 
-    if (m_print_to_console) {
+    if (print_to_console) {
         // print to console
         fwrite(strTimestamped.data(), 1, strTimestamped.size(), stdout);
         fflush(stdout);
@@ -236,9 +239,17 @@ void BCLog::Logger::LogPrintStr(const std::string &str, bool useVMLog)
     if (m_print_to_file) {
         std::lock_guard<std::mutex> scoped_lock(m_file_mutex);
 
+        //////////////////////////////// // qtum
+        FILE* file = m_fileout;
+        if(useVMLog){
+            file = m_fileoutVM;
+        }
+        ////////////////////////////////
+
         // buffer if we haven't opened the log yet
         if (file == nullptr) {
-            m_msgs_before_open.push_back(strTimestamped);
+            LogMsg logmsg(strTimestamped, useVMLog);
+            m_msgs_before_open.push_back(logmsg);
         }
         else
         {
@@ -248,11 +259,13 @@ void BCLog::Logger::LogPrintStr(const std::string &str, bool useVMLog)
                 fs::path file_path = m_file_path;
                 if(useVMLog)
                     file_path = m_file_pathVM;
-                file = fsbridge::freopen(file_path, "a", file);
-                if (!file) {
+                FILE* new_fileout = fsbridge::fopen(file_path, "a");
+                if (!new_fileout) {
                     return;
                 }
-                setbuf(file, nullptr); // unbuffered
+                setbuf(new_fileout, nullptr); // unbuffered
+                fclose(file);
+                file = new_fileout;
             }
 
             FileWriteStr(strTimestamped, file);
@@ -274,7 +287,7 @@ void BCLog::Logger::ShrinkDebugFile()
     size_t log_size = 0;
     try {
         log_size = fs::file_size(m_file_path);
-    } catch (boost::filesystem::filesystem_error &) {}
+    } catch (const fs::filesystem_error&) {}
 
     // If debug.log file is more than 10% bigger the RECENT_DEBUG_HISTORY_SIZE
     // trim it down by saving only the last RECENT_DEBUG_HISTORY_SIZE bytes

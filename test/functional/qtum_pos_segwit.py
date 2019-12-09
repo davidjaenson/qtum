@@ -15,6 +15,9 @@ class QtumPOSSegwitTest(BitcoinTestFramework):
         self.setup_clean_chain = True
         self.num_nodes = 1
 
+    def skip_test_if_missing_module(self):
+        self.skip_if_no_wallet()
+
     def create_unsigned_pos_block(self, staking_prevouts, nTime):
 
         best_block_hash = self.node.getbestblockhash()
@@ -35,9 +38,9 @@ class QtumPOSSegwitTest(BitcoinTestFramework):
             return None
 
         # create a new private key used for block signing.
-        block_sig_key = CECKey()
-        block_sig_key.set_secretbytes(hash256(struct.pack('<I', 0xffff)))
-        pubkey = block_sig_key.get_pubkey()
+        block_sig_key = ECKey()
+        block_sig_key.set(hash256(struct.pack('<I', 0)), False)
+        pubkey = block_sig_key.get_pubkey().get_bytes()
         scriptPubKey = CScript([pubkey, OP_CHECKSIG])
         stake_tx_unsigned = CTransaction()
         coinstake_prevout = block.prevoutStake
@@ -77,9 +80,13 @@ class QtumPOSSegwitTest(BitcoinTestFramework):
         return staking_prevouts
 
     def run_test(self):
+        privkey = byte_to_base58(hash256(struct.pack('<I', 0)), 239)
+        for n in self.nodes:
+            n.importprivkey(privkey)
+
         self.node = self.nodes[0]
         self.node.setmocktime(int(time.time()) - 2*COINBASE_MATURITY)
-        self.node.generate(50+COINBASE_MATURITY)
+        self.node.generatetoaddress(50+COINBASE_MATURITY, "qSrM9K6FMhZ29Vkp8Rdk8Jp66bbfpjFETq")
 
         staking_prevouts = self.collect_staking_prevouts()
 

@@ -15,6 +15,9 @@ class QtumIgnoreMPOSParticipantRewardTest(BitcoinTestFramework):
         self.setup_clean_chain = True
         self.num_nodes = 1
 
+    def skip_test_if_missing_module(self):
+        self.skip_if_no_wallet()
+
     def remove_from_staking_prevouts(self, remove_prevout):
         for j in range(len(self.staking_prevouts)):
             prevout = self.staking_prevouts[j]
@@ -23,14 +26,13 @@ class QtumIgnoreMPOSParticipantRewardTest(BitcoinTestFramework):
                 break
 
     def run_test(self):
+        privkey = byte_to_base58(hash256(struct.pack('<I', 0)), 239)
+        for n in self.nodes:
+            n.importprivkey(privkey)
+
         self.node = self.nodes[0]
         self.node.setmocktime(int(time.time()) - 1000000)
-        self.node.generate(10 + COINBASE_MATURITY)
-        # These are the privkeys that corresponds to the pubkeys in the pos outputs
-        # These are used by default by create_pos_block
-        for i in range(0xff+1):
-            privkey = byte_to_base58(hash256(struct.pack('<I', i)), 239)
-            self.node.importprivkey(privkey)
+        self.node.generatetoaddress(10 + COINBASE_MATURITY, "qSrM9K6FMhZ29Vkp8Rdk8Jp66bbfpjFETq")
 
         """
         pragma solidity ^0.4.12;
@@ -61,7 +63,7 @@ class QtumIgnoreMPOSParticipantRewardTest(BitcoinTestFramework):
         # This will be an mpos participant
         mpos_participant_block = self.node.getblock(self.node.getblockhash(self.node.getblockcount() - 505))
         mpos_participant_txid = mpos_participant_block['tx'][1]
-        mpos_participant_tx = self.node.getrawtransaction(mpos_participant_txid, True)
+        mpos_participant_tx = self.node.decoderawtransaction(self.node.gettransaction(mpos_participant_txid)['hex'])
         mpos_participant_pubkey = hex_str_to_bytes(mpos_participant_tx['vout'][1]['scriptPubKey']['asm'].split(' ')[0])
         mpos_participant_hpubkey = hash160(mpos_participant_pubkey)
         mpos_participant_addr = hex_hash_to_p2pkh(bytes_to_hex_str(mpos_participant_hpubkey))

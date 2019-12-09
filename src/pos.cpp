@@ -87,7 +87,7 @@ bool CheckStakeKernelHash(CBlockIndex* pindexPrev, unsigned int nBits, uint32_t 
     if (UintToArith256(hashProofOfStake) > bnTarget)
         return false;
 
-    if (g_logger->WillLogCategory(BCLog::COINSTAKE) && !fPrintProofOfStake)
+    if (LogInstance().WillLogCategory(BCLog::COINSTAKE) && !fPrintProofOfStake)
     {
         LogPrintf("CheckStakeKernelHash() : check modifier=%s nTimeBlockFrom=%u nPrevout=%u nTimeBlock=%u hashProof=%s\n",
             nStakeModifier.GetHex().c_str(),
@@ -125,7 +125,7 @@ bool CheckProofOfStake(CBlockIndex* pindexPrev, CValidationState& state, const C
     if (!VerifySignature(coinPrev, txin.prevout.hash, tx, 0, SCRIPT_VERIFY_NONE))
         return state.DoS(100, error("CheckProofOfStake() : VerifySignature failed on coinstake %s", tx.GetHash().ToString()));
 
-    if (!CheckStakeKernelHash(pindexPrev, nBits, blockFrom->nTime, coinPrev.out.nValue, txin.prevout, nTimeBlock, hashProofOfStake, targetProofOfStake, g_logger->WillLogCategory(BCLog::COINSTAKE)))
+    if (!CheckStakeKernelHash(pindexPrev, nBits, blockFrom->nTime, coinPrev.out.nValue, txin.prevout, nTimeBlock, hashProofOfStake, targetProofOfStake, LogInstance().WillLogCategory(BCLog::COINSTAKE)))
         return state.DoS(1, error("CheckProofOfStake() : INFO: check kernel failed on coinstake %s, hashProof=%s", tx.GetHash().ToString(), hashProofOfStake.ToString())); // may occur during initial download or if behind on block chain sync
 
     return true;
@@ -137,6 +137,86 @@ bool CheckCoinStakeTimestamp(uint32_t nTimeBlock)
     return (nTimeBlock & STAKE_TIMESTAMP_MASK) == 0;
 }
 
+bool CheckBlockInputPubKeyMatchesOutputPubKey(const CBlock& block, CCoinsViewCache& view) {
+    Coin coinIn;
+    if(!view.GetCoin(block.prevoutStake, coinIn)) {
+        return error("%s: Could not fetch prevoutStake from UTXO set", __func__);
+    }
+
+    CTransactionRef coinstakeTx = block.vtx[1];
+    if(coinstakeTx->vout.size() < 2) {
+        return error("%s: coinstake transaction does not have the minimum number of outputs", __func__);
+    }
+
+    const CTxOut& txout = coinstakeTx->vout[1];
+
+    if(coinIn.out.scriptPubKey == txout.scriptPubKey) {
+        return true;
+    }
+
+    // If the input does not exactly match the output, it MUST be on P2PKH spent and P2PK out.
+    CTxDestination inputAddress;
+    txnouttype inputTxType=TX_NONSTANDARD;
+    if(!ExtractDestination(coinIn.out.scriptPubKey, inputAddress, &inputTxType)) {
+        return error("%s: Could not extract address from input", __func__);
+    }
+
+    if(inputTxType != TX_PUBKEYHASH || inputAddress.type() != typeid(CKeyID)) {
+        return error("%s: non-exact match input must be P2PKH", __func__);
+    }
+
+    CTxDestination outputAddress;
+    txnouttype outputTxType=TX_NONSTANDARD;
+    if(!ExtractDestination(txout.scriptPubKey, outputAddress, &outputTxType)) {
+        return error("%s: Could not extract address from output", __func__);
+    }
+
+    if(outputTxType != TX_PUBKEY || outputAddress.type() != typeid(CKeyID)) {
+        return error("%s: non-exact match output must be P2PK", __func__);
+    }
+
+    if(boost::get<CKeyID>(inputAddress) != boost::get<CKeyID>(outputAddress)) {
+        return error("%s: input P2PKH pubkey does not match output P2PK pubkey", __func__);
+    }
+
+    return true;
+}
+
+bool CheckRecoveredPubKeyFromBlockSignature(CBlockIndex* pindexPrev, const CBlockHeader& block, CCoinsViewCache& view) {
+    Coin coinPrev;
+    if(!view.GetCoin(block.prevoutStake, coinPrev)){
+        if(!GetSpentCoinFromMainChain(pindexPrev, block.prevoutStake, &coinPrev)) {
+            return error("CheckRecoveredPubKeyFromBlockSignature(): Could not find %s and it was not at the tip", block.prevoutStake.hash.GetHex());
+        }
+    }
+
+    uint256 hash = block.GetHashWithoutSign();
+    CPubKey pubkey;
+
+    if(block.vchBlockSig.empty()) {
+        return error("CheckRecoveredPubKeyFromBlockSignature(): Signature is empty\n");
+    }
+
+    for(uint8_t recid = 0; recid <= 3; ++recid) {
+        for(uint8_t compressed = 0; compressed < 2; ++compressed) {
+            if(!pubkey.RecoverLaxDER(hash, block.vchBlockSig, recid, compressed)) {
+                continue;
+            }
+
+            CTxDestination address;
+            txnouttype txType=TX_NONSTANDARD;
+            if(ExtractDestination(coinPrev.out.scriptPubKey, address, &txType)){
+                if ((txType == TX_PUBKEY || txType == TX_PUBKEYHASH) && address.type() == typeid(CKeyID)) {
+                    if(pubkey.GetID() == boost::get<CKeyID>(address)) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    return false;
+}
 
 bool CheckKernel(CBlockIndex* pindexPrev, unsigned int nBits, uint32_t nTimeBlock, const COutPoint& prevout, CCoinsViewCache& view)
 {
@@ -152,18 +232,20 @@ bool CheckKernel(CBlockIndex* pindexPrev, unsigned int nBits, uint32_t nTimeBloc
         //not found in cache (shouldn't happen during staking, only during verification which does not use cache)
         Coin coinPrev;
         if(!view.GetCoin(prevout, coinPrev)){
-            return false;
+            if(!GetSpentCoinFromMainChain(pindexPrev, prevout, &coinPrev)) {
+                return error("CheckKernel(): Could not find coin and it was not at the tip");
+            }
         }
 
         if(pindexPrev->nHeight + 1 - coinPrev.nHeight < COINBASE_MATURITY){
-            return false;
+            return error("CheckKernel(): Coin not matured");
         }
         CBlockIndex* blockFrom = pindexPrev->GetAncestor(coinPrev.nHeight);
         if(!blockFrom) {
-            return false;
+            return error("CheckKernel(): Could not find block");
         }
         if(coinPrev.IsSpent()){
-            return false;
+            return error("CheckKernel(): Coin is spent");
         }
 
         return CheckStakeKernelHash(pindexPrev, nBits, blockFrom->nTime, coinPrev.out.nValue, prevout,
@@ -203,26 +285,179 @@ void CacheKernel(std::map<COutPoint, CStakeCache>& cache, const COutPoint& prevo
     cache.insert({prevout, c});
 }
 
+/**
+ * Proof-of-stake functions needed in the wallet but wallet independent
+ */
+struct ScriptsElement{
+    CScript script;
+    uint256 hash;
+};
 
+/**
+ * Cache of the recent mpos scripts for the block reward recipients
+ * The max size of the map is 2 * nCacheScripts - nMPoSRewardRecipients, so in this case it is 20
+ */
+std::map<int, ScriptsElement> scriptsMap;
 
+unsigned int GetStakeMaxCombineInputs() { return 100; }
 
+int64_t GetStakeCombineThreshold() { return 100 * COIN; }
 
+unsigned int GetStakeSplitOutputs() { return 2; }
 
+int64_t GetStakeSplitThreshold() { return GetStakeSplitOutputs() * GetStakeCombineThreshold(); }
 
+bool NeedToEraseScriptFromCache(int nBlockHeight, int nCacheScripts, int nScriptHeight, const ScriptsElement& scriptElement)
+{
+    // Erase element from cache if not in range [nBlockHeight - nCacheScripts, nBlockHeight + nCacheScripts]
+    if(nScriptHeight < (nBlockHeight - nCacheScripts) ||
+            nScriptHeight > (nBlockHeight + nCacheScripts))
+        return true;
 
+    // Erase element from cache if hash different
+    CBlockIndex* pblockindex = chainActive[nScriptHeight];
+    if(pblockindex && pblockindex->GetBlockHash() != scriptElement.hash)
+        return true;
 
+    return false;
+}
 
+void CleanScriptCache(int nHeight, const Consensus::Params& consensusParams)
+{
+    int nCacheScripts = consensusParams.nMPoSRewardRecipients * 1.5;
 
+    // Remove the scripts from cache that are not used
+    for (std::map<int, ScriptsElement>::iterator it=scriptsMap.begin(); it!=scriptsMap.end();){
+        if(NeedToEraseScriptFromCache(nHeight, nCacheScripts, it->first, it->second))
+        {
+            it = scriptsMap.erase(it);
+        }
+        else{
+            it++;
+        }
+    }
+}
 
+bool ReadFromScriptCache(CScript &script, CBlockIndex* pblockindex, int nHeight, const Consensus::Params& consensusParams)
+{
+    CleanScriptCache(nHeight, consensusParams);
 
+    // Find the script in the cache
+    std::map<int, ScriptsElement>::iterator it = scriptsMap.find(nHeight);
+    if(it != scriptsMap.end())
+    {
+        if(it->second.hash == pblockindex->GetBlockHash())
+        {
+            script = it->second.script;
+            return true;
+        }
+    }
 
+    return false;
+}
 
+void AddToScriptCache(CScript script, CBlockIndex* pblockindex, int nHeight, const Consensus::Params& consensusParams)
+{
+    CleanScriptCache(nHeight, consensusParams);
 
+    // Add the script into the cache
+    ScriptsElement listElement;
+    listElement.script = script;
+    listElement.hash = pblockindex->GetBlockHash();
+    scriptsMap.insert(std::pair<int, ScriptsElement>(nHeight, listElement));
+}
 
+bool AddMPoSScript(std::vector<CScript> &mposScriptList, int nHeight, const Consensus::Params& consensusParams)
+{
+    // Check if the block index exist into the active chain
+    CBlockIndex* pblockindex = chainActive[nHeight];
+    if(!pblockindex)
+    {
+        LogPrint(BCLog::COINSTAKE, "Block index not found\n");
+        return false;
+    }
 
+    // Try find the script from the cache
+    CScript script;
+    if(ReadFromScriptCache(script, pblockindex, nHeight, consensusParams))
+    {
+        mposScriptList.push_back(script);
+        return true;
+    }
 
+    // Read the block
+    uint160 stakeAddress;
+    if(!pblocktree->ReadStakeIndex(nHeight, stakeAddress)){
+        return false;
+    }
 
+    // The block reward for PoS is in the second transaction (coinstake) and the second or third output
+    if(pblockindex->IsProofOfStake())
+    {
+        if(stakeAddress == uint160())
+        {
+            LogPrint(BCLog::COINSTAKE, "Fail to solve script for mpos reward recipient\n");
+            //This should never fail, but in case it somehow did we don't want it to bring the network to a halt
+            //So, use an OP_RETURN script to burn the coins for the unknown staker
+            script = CScript() << OP_RETURN;
+        }else{
+            // Make public key hash script
+            script = CScript() << OP_DUP << OP_HASH160 << ToByteVector(stakeAddress) << OP_EQUALVERIFY << OP_CHECKSIG;
+        }
 
+        // Add the script into the list
+        mposScriptList.push_back(script);
 
+        // Update script cache
+        AddToScriptCache(script, pblockindex, nHeight, consensusParams);
+    }
+    else
+    {
+        if(Params().MineBlocksOnDemand()){
+            //this could happen in regtest. Just ignore and add an empty script
+            script = CScript() << OP_RETURN;
+            mposScriptList.push_back(script);
+            return true;
 
+        }
+        LogPrint(BCLog::COINSTAKE, "The block is not proof-of-stake\n");
+        return false;
+    }
+
+    return true;
+}
+
+bool GetMPoSOutputScripts(std::vector<CScript>& mposScriptList, int nHeight, const Consensus::Params& consensusParams)
+{
+    bool ret = true;
+    nHeight -= COINBASE_MATURITY;
+
+    // Populate the list of scripts for the reward recipients
+    for(int i = 0; (i < consensusParams.nMPoSRewardRecipients - 1) && ret; i++)
+    {
+        ret &= AddMPoSScript(mposScriptList, nHeight - i, consensusParams);
+    }
+
+    return ret;
+}
+
+bool CreateMPoSOutputs(CMutableTransaction& txNew, int64_t nRewardPiece, int nHeight, const Consensus::Params& consensusParams)
+{
+    std::vector<CScript> mposScriptList;
+    if(!GetMPoSOutputScripts(mposScriptList, nHeight, consensusParams))
+    {
+        LogPrint(BCLog::COINSTAKE, "Fail to get the list of recipients\n");
+        return false;
+    }
+
+    // Split the block reward with the recipients
+    for(unsigned int i = 0; i < mposScriptList.size(); i++)
+    {
+        CTxOut txOut(CTxOut(0, mposScriptList[i]));
+        txOut.nValue = nRewardPiece;
+        txNew.vout.push_back(txOut);
+    }
+
+    return true;
+}
 
